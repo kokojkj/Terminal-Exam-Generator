@@ -1,0 +1,289 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>AI Terminal Mock Exam Generator</title>
+    <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/jquery.terminal/css/jquery.terminal.min.css"/>
+    <style>
+        body {
+            background-color: #11111b;
+            color: #bac2de;
+            font-family: 'Courier New', Courier, monospace;
+            height: 100vh;
+            margin: 0;
+        }
+        .terminal {
+            height: 100%;
+            overflow: auto;
+            padding: 10px;
+        }
+    </style>
+</head>
+<body>
+    <div class="terminal" id="terminal"></div>
+    <script src="https://cdn.jsdelivr.net/npm/jquery"></script>
+    <script src="https://cdn.jsdelivr.net/npm/jquery.terminal/js/jquery.terminal.min.js"></script>
+    <script>
+        $(document).ready(function() {
+            let config = {
+                apiKey: '',
+                endpoint: 'https://jamsapi.hackclub.dev/openai/chat/completions',
+                model: 'gpt-4o-mini'
+            };
+
+            const generateExamPrompt = (topic, difficulty, questionCount) => {
+                return `Create an exam on ${topic} with the following specifications:
+- Difficulty Level: ${difficulty}
+- Number of Questions: ${questionCount}
+
+Return a JSON object with a "questions" array containing multiple-choice questions. 
+
+For EACH question, include:
+{
+    "question": "Detailed question text",
+    "options": ["Option A", "Option B", "Option C", "Option D"],
+    "correctAnswer": "Correct option text"
+}
+
+IMPORTANT: 
+- Ensure the response is a VALID JSON with a "questions" key
+- Questions should match the specified difficulty
+- Return ONLY the JSON object`;
+            };
+
+            const savedConfig = localStorage.getItem('configuration');
+            if (savedConfig) {
+                try {
+                    config = JSON.parse(savedConfig);
+                } catch (error) {
+                    console.error('Error parsing saved config:', error);
+                }
+            }
+
+            $('#terminal').terminal({
+                help: function() {
+                    this.echo("Available Commands:");
+                    this.echo("1. exam - generate and start an exam");
+                    this.echo("2. config - AI endpoint and apiKey configuration");
+                    this.echo("3. clear - Clear terminal screen");
+                    this.echo("4. help - Show this help menu");
+                },
+                
+                config: function() {
+                    const terminal = this;
+                    terminal.push(function(input) {
+                        const [command, ...args] = input.split(' ');
+                        
+                        switch(command.toLowerCase()) {
+                            case 'apikey':
+                                if (args.length > 0) {
+                                    config.apiKey = args.join(' ').trim();
+                                    terminal.echo(`API Key updated`);
+                                    localStorage.setItem('configuration', JSON.stringify(config));
+                                } else {
+                                    terminal.echo(`Current API Key: ${config.apiKey ? '***********' : 'Not set'}`);
+                                }
+                                break;
+                            
+                            case 'endpoint':
+                                if (args.length > 0) {
+                                    config.endpoint = args.join(' ').trim();
+                                    terminal.echo(`Endpoint updated to: ${config.endpoint}`);
+                                    localStorage.setItem('configuration', JSON.stringify(config));
+                                } else {
+                                    terminal.echo(`Current Endpoint: ${config.endpoint}`);
+                                }
+                                break;
+                            
+                            case 'model':
+                                if (args.length > 0) {
+                                    config.model = args.join(' ').trim();
+                                    terminal.echo(`Model updated to: ${config.model}`);
+                                    localStorage.setItem('configuration', JSON.stringify(config));
+                                } else {
+                                    terminal.echo(`Current Model: ${config.model}`);
+                                }
+                                break;
+                            
+                            case 'show':
+                                terminal.echo('Current Configuration:');
+                                terminal.echo(`API Key: ${config.apiKey ? '***********' : 'Not set'}`);
+                                terminal.echo(`Endpoint: ${config.endpoint}`);
+                                terminal.echo(`Model: ${config.model}`);
+                                break;
+                            
+                            case 'help':
+                                terminal.echo('Commands:');
+                                terminal.echo('- apikey [key] - add/change your API key');
+                                terminal.echo('- endpoint [url] - Set or view API endpoint');
+                                terminal.echo('- model [model-name] - Set or view current model');
+                                terminal.echo('- show - Display current configuration');
+                                terminal.echo('- exit - Return to main screen');
+                                break;
+                            
+                            case 'exit':
+                                terminal.pop();
+                                return;
+                            
+                            default:
+                                terminal.echo(`Unknown config command: ${command}`);
+                                terminal.echo('Type "help" for available commands');
+                        }
+                    }, {
+                        prompt: 'config> ',
+                        name: 'config'
+                    });
+                },
+
+                exam: function() {
+                    if (!config.apiKey) {
+                        this.echo('Error: API Key not configured. Use "config" to add your API key.');
+                        return;
+                    }
+
+                    const terminal = this;
+                    let examState = {
+                        topic: '',
+                        difficulty: '',
+                        questionCount: 0,
+                        questions: null,
+                        currentQuestion: 0,
+                        answers: []
+                    };
+
+                    terminal.push(async function(input) {
+                        if (input.toLowerCase() === 'exit') {
+                            terminal.pop();
+                            return;
+                        }
+
+                        if (!examState.topic) {
+                            examState.topic = input;
+                            terminal.echo("\nSelect difficulty (easy/medium/hard):");
+                            return;
+                        }
+
+                        if (!examState.difficulty) {
+                            if (!['easy', 'medium', 'hard'].includes(input.toLowerCase())) {
+                                terminal.echo('Please choose difficulty');
+                                return;
+                            }
+                            examState.difficulty = input.toLowerCase();
+                            terminal.echo("\nEnter number of questions (1-50):");
+                            return;
+                        }
+
+                        if (!examState.questionCount) {
+                            const count = parseInt(input);
+                            if (isNaN(count) || count < 1 || count > 50) {
+                                terminal.echo('Please enter a number between 1 and 50:');
+                                return;
+                            }
+                            examState.questionCount = count;
+                            terminal.echo('\nGenerating exam...');
+                            try {
+                                const response = await $.ajax({
+                                    url: config.endpoint,
+                                    method: 'POST',
+                                    headers: {
+                                        'Authorization': `Bearer ${config.apiKey}`,
+                                        'Content-Type': 'application/json'
+                                    },
+                                    data: JSON.stringify({
+                                        model: config.model,
+                                        response_format: { type: "json_object" },
+                                        messages: [
+                                            {
+                                                role: "system",
+                                                content: "You are a helpful assistant that generates exam questions in a structured JSON format."
+                                            },
+                                            {
+                                                role: "user",
+                                                content: generateExamPrompt(examState.topic, examState.difficulty, examState.questionCount)
+                                            }
+                                        ]
+                                    })
+                                });
+
+                                const parsedResponse = JSON.parse(response.choices[0].message.content);
+                                examState.questions = parsedResponse.questions;
+                                
+                                showQuestion();
+                            } catch (error) {
+                                terminal.echo('Error generating exam');
+                                terminal.pop();
+                            }
+                            return;
+                        }
+
+                        if (examState.questions) {
+                            const answer = parseInt(input);
+                            if (isNaN(answer) || answer < 1 || answer > 4) {
+                                terminal.echo('Please enter a number between 1 and 4:');
+                                return;
+                            }
+
+                            const q = examState.questions[examState.currentQuestion];
+                            examState.answers.push(q.options[answer - 1]);
+                            examState.currentQuestion++;
+
+                            if (examState.currentQuestion < examState.questions.length) {
+                                showQuestion();
+                            } else {
+                                gradeExam();
+                                terminal.pop();
+                            }
+                        }
+
+                        function showQuestion() {
+                            const q = examState.questions[examState.currentQuestion];
+                            terminal.echo(`\nQuestion ${examState.currentQuestion + 1} of ${examState.questions.length}:`);
+                            terminal.echo(q.question);
+                            q.options.forEach((option, index) => {
+                                terminal.echo(`${index + 1}. ${option}`);
+                            });
+                            terminal.echo('\nEnter your answer (1-4):');
+                        }
+
+                        function gradeExam() {
+                            let score = 0;
+                            examState.answers.forEach((answer, index) => {
+                                if (answer === examState.questions[index].correctAnswer) {
+                                    score++;
+                                }
+                            });
+
+                            const percentage = Math.round((score / examState.questions.length) * 100);
+                            
+                            terminal.echo('\nExam Results:');
+                            terminal.echo(`Topic: ${examState.topic}`);
+                            terminal.echo(`Difficulty: ${examState.difficulty}`);
+                            terminal.echo(`Total Questions: ${examState.questions.length}`);
+                            terminal.echo(`Correct Answers: ${score}`);
+                            terminal.echo(`Score: ${percentage}%`);
+                        }
+                    }, {
+                        prompt: 'exam> ',
+                        name: 'exam'
+                    });
+
+                    terminal.echo('Enter exam topic (e.g., javascript, bash scripting):');
+                },
+
+                clear: function() {
+                    this.clear();
+                }
+            }, {
+                greetings: [
+                    'Welcome to AI Terminal Mock Exam Generator!',
+					'Use "config" to set up your API key and endpoint.',
+                    'Type "help" to see available commands.',
+                    'Use "exam" to generate and start an exam.'
+                ].join('\n'),
+                prompt: '> '
+            });
+        });
+    </script>
+</body>
+</html>
